@@ -18,43 +18,26 @@ var runnable = function(fw,runfromServer){
     	this.controller = null;
     	this.original = null;
     	this.session="";
+    	this.router=null;
     	this.contr_argu = [];
-    }
+    };
     var routerObj = null;
     
-    var parseFileFromUrl = function(filePath){// all files
-    	//1.  ?后的一切都不是file的name
-		if ( filePath.indexOf('?') != -1 ) {
-            filePath = filePath.substring(0,filePath.indexOf("?"));
-        }
-        //文件直接读取,使用baseurl，已经彻底解决此问题
-        if (filePath.match(/\.\w+$/) ) {
-        	if (filePath.indexOf('.html/') != -1){
-        		filePath = filePath.substring(filePath.indexOf(".html/")+5);
-        	}
-        	//检测controller的去减
-        	// if (!routerObj){
-	    		// routerObj = fw.router.getAll();
-	    	// }
-	    	
-        }
-    	//2. /的前面如果有.html也舍弃后面的
-    	if ( filePath.indexOf('.html/') != -1) {
-    		filePath = filePath.substring(0,filePath.indexOf('.html/')+5);
-    	}
-    	//3. /前面没有.html，且匹配了定义的router,则返回index.html
-    	if ( !filePath.match(/\.\w+$/) ) {//文件直接读取
-        	filePath = "/index.html";
-        }
-    	
-    	return filePath;
-    }
+   
     var parseFromUrl = function(filePath){
     	//0. 去掉#号
     	if (filePath.indexOf("#")!= -1) {
     		filePath = filePath.replace("#","");
-    	}
+    	};
     	filePath = filePath.replace(/\/+/g,"/");
+    	
+    	// hack to support no base_url router eg. debug.html/js/src/sumeru.js could be js/src/sumeru.js
+        if (filePath.indexOf('.html/') != -1){
+            if (filePath.match(/^[^?]*\.\w+$/) || filePath.match(/\.\w+\?/) ) {//static file
+                filePath = filePath.substring(filePath.indexOf(".html/")+5);              
+            }
+        }
+        
     	//1.  ?后的一切都不是file的name
     	var _filePath  = filePath;
     	var params="",controller="";
@@ -72,7 +55,12 @@ var runnable = function(fw,runfromServer){
     		controller = _filePath;
     		_filePath = "/";
         }
-        
+        //判断静态文件
+        if (filePath.match(/\.\w+/) && !filePath.match(/\.html/)) {//static file
+            this.controller = null;
+            this.path = _filePath;
+            return this;
+        }
         if (!routerObj){
     		routerObj = fw.router.getAll();
     	}
@@ -89,7 +77,11 @@ var runnable = function(fw,runfromServer){
     	}
     	if (q>-1){// HAS MATCH ROUTER
     		if (runfromServer && !routerObj[q].server_render) {
-    			fw.log(routerObj[q],"no server render...");
+    		    if (routerObj[q].type === 'file'){
+    		        fw.log("router:fileUpload matche.",routerObj[q].path);
+    		    }else{
+    		        fw.log("router:server_render is false.",routerObj[q].path);
+                }
     			controller = null;
     		}else{
     			if (longest == 0){//最长的就是空白
@@ -98,7 +90,15 @@ var runnable = function(fw,runfromServer){
 	    			}
 	    			contr_argu = controller.split("/");
 		    		contr_argu.unshift("");
-		    		controller = "";
+		    		//！更新！为了防止设置了default controller后，所有请求都没有了404，
+		    		//所以当匹配“”时，如果后面有arguments，将认为是404，
+		    		//如果想用argument，则不要使用空controller
+		    		if (contr_argu[1] == ''){
+		    		    controller = "";
+		    		}else{
+		    		    controller = 0;
+		    		}
+		    		
 	    		}else{
 	    			matchTmp = controller.match(routerObj[q].path);
 		    		contr_argu = controller.replace(routerObj[q].path,"");
@@ -107,6 +107,11 @@ var runnable = function(fw,runfromServer){
 					contr_argu[0] = controller;
 	    		}
     		}
+    		
+    		if (routerObj[q].type==='file'){
+    		    controller = null;//上传文件不需要server渲染
+    		}
+            this.router = routerObj[q];
     	}else{// NO MATCH ROUTER
     		controller = null;
     		contr_argu.push("");
@@ -121,34 +126,34 @@ var runnable = function(fw,runfromServer){
     	var session = (sessionObj.substring(1,sessionObj.length - 1));
         
     	//TODO REMOVE paramstring LATER
-    	return {path:_filePath,params:paramsObj,controller:controller,session:session,contr_argu:contr_argu};
+    	
+    	this.path = _filePath;
+        this.params = paramsObj;
+        this.controller = controller;
+        this.session  = session;
+        this.contr_argu = contr_argu;
+       return this;//{path:_filePath,params:paramsObj,controller:controller,session:session,contr_argu:contr_argu};
 		
 		
-    }
-    // var parseSessionFromUrl = function(){
-//     	
-    // }
+    };
     
     _uri.prototype = {
+        parseFromUrl :parseFromUrl,
     	init : function(filePath){
     		this.original = filePath;
-    		var obj =  parseFromUrl(filePath);
-    		this.path = obj.path;
-    		this.params = obj.params;
-    		this.controller = obj.controller
-    		this.session  = obj.session;
-    		this.contr_argu = obj.contr_argu;
+    		this.parseFromUrl(filePath);
+    		
     	},
     	
-    }
+    };
     fwuri.__reg("getInstance",function(url){
     	var uri = new _uri();
     	uri.init(url);
     	return uri;
     });
-    fwuri.__reg("parseFileFromUrl",parseFileFromUrl);
+    // fwuri.__reg("parseFileFromUrl",parseFileFromUrl);
    
-}
+};
 
 if(typeof module !='undefined' && module.exports){
     module.exports = function(fw){

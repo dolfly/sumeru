@@ -10,10 +10,37 @@ var runnable = function(fw){
     var transitionOut = false;//如果为true，则表明此controller是反转出场
     var globalIsforce = null;
     
+    function updateBlockHtml(element, html, opts) {
+
+    	if(element.innerHTML == html)
+    	{
+    		return;
+    	}
+    	
+    	var options = Library.objUtils.extend({}, {
+    		domdiff : false
+    	}, opts);
+
+    	Library.touch.trigger(element, 'block_before_render');
+    	
+    	if (options.domdiff) {
+    		
+    		element.innerHTML = element.innerHTML;
+    		fw.domdiff.convert(html, element);
+    		
+    	} else {
+    		
+    		element.innerHTML = html;
+    		
+    	}
+    	
+    	Library.touch.trigger(element, 'block_after_render');
+    }
+    
     /**
      * 全局的模板ID => 数据的Map
      */
-    _bindingMap = {};
+    var _bindingMap = {};
     
     /**
      * 绑定数据和事件的方法
@@ -193,9 +220,6 @@ var runnable = function(fw){
                 if (this.isWaiting > 0)//hack
                     throw 'NOT call env.start after ' + after / 1000 + ' seconds, did you forget it?';
             }, after);
-            // this.isWaitingChecker = setTimeout(function(){
-                // throw 'NOT call env.start after ' + after / 1000 + ' seconds, do you forget it?';
-            // }, after);
         },
         
         clearClockChecker : function(){
@@ -215,7 +239,7 @@ var runnable = function(fw){
         redirect:function(queryPath,paramMap,isforce){
             var urlHash = queryPath;
             if(paramMap){
-                urlHash += "!" + fw.utils.mapToUriParam(paramMap);
+                urlHash += "?" + fw.utils.mapToUriParam(paramMap);
             }
             fw.router.redirect(urlHash,isforce);
         },
@@ -250,7 +274,7 @@ var runnable = function(fw){
         },
         
         onrender : function(){
-            //throw "Didn't specify a onrender event handler";
+            throw "Didn't specify a onrender event handler";//这句不能被注释掉，当未指定onrender时候，server渲染会一直等待，只有抛出异常才会执行客户端渲染
         },
         
         onready : function(){
@@ -383,7 +407,8 @@ var runnable = function(fw){
                             
                             //将标记的tpl-role=page_unit换为page-unit-rendered-page
                             html = html.replace(/tpl-role[\s]*=[\s]*['"]page_unit['"]/, '__page-unit-rendered-page="' + page + '"');
-                            target.innerHTML = html;
+                            //target.innerHTML = html;
+                            updateBlockHtml(target, html);
                         } else {
                             var fakeNode = document.createElement('div');
                             fakeNode.innerHTML = me.__templateBlocks[item](data);
@@ -440,11 +465,16 @@ var runnable = function(fw){
                     for(var i = 0, l = targets.length; i < l; i++){
                         var target = targets[i];
                         
-                        if(increment&&typeof nodomdiff== 'undefined'){
-                            target.innerHTML = target.innerHTML;
-                            fw.domdiff.convert(me.__templateBlocks[item](data),target);
+                        if(increment&&fw.config.get('domdiff')){
+                            //target.innerHTML = target.innerHTML;
+                            //fw.domdiff.convert(me.__templateBlocks[item](data),target);
+                            
+                            updateBlockHtml(target, me.__templateBlocks[item](data), { domdiff:true });
+                            
                         }else{
-                            target.innerHTML = me.__templateBlocks[item](data);
+                            //target.innerHTML = me.__templateBlocks[item](data);
+                            
+                            updateBlockHtml(target, me.__templateBlocks[item](data));
                         }
                     }
                     
@@ -471,11 +501,16 @@ var runnable = function(fw){
                                 var target = targets[x];
                                 
 
-                                if(increment&&typeof nodomdiff== 'undefined'){
-                                    target.innerHTML = target.innerHTML;
-                                    fw.domdiff.convert(me.__templateBlocks[i](data),target);
+                                if(increment&&fw.config.get('domdiff')){
+                                    //target.innerHTML = target.innerHTML;
+                                    //fw.domdiff.convert(me.__templateBlocks[i](data),target);
+                                	
+                                	 updateBlockHtml(target, me.__templateBlocks[item](data), { domdiff:true });
+                                	 
                                 }else{
-                                    target.innerHTML = me.__templateBlocks[i](data);
+                                    //target.innerHTML = me.__templateBlocks[i](data);
+                                	
+                                	updateBlockHtml(target, me.__templateBlocks[item](data));
                                 }
                             }
                             
@@ -548,7 +583,7 @@ var runnable = function(fw){
         						e.preventDefault();
             				}
             			}
-            		}
+            		};
             		if (!dom.getAttribute("link-ajax") && !dom.getAttribute("data-rel")) {
             			dom.addEventListener("click", checkRedirect);
             			dom.addEventListener("touchstart", checkRedirect);
@@ -764,7 +799,9 @@ var runnable = function(fw){
                         var targets = queryElementsByTplId(i);
                         for(var x = 0, y = targets.length; x < y; x++){
                             var target = targets[x];
-                            target.innerHTML = me.__templateBlocks[i]({});
+                            //target.innerHTML = me.__templateBlocks[i]({});
+                            
+                            updateBlockHtml(target, me.__templateBlocks[i]({}));
                         }
                     });
                     
@@ -920,7 +957,11 @@ var runnable = function(fw){
                         var targets = queryElementsByTplId(i);
                         for(var x = 0, y = targets.length; x < y; x++){
                             var target = targets[x];
-                            target.innerHTML = me.__templateBlocks[i]({});    
+                            if (!target.innerHTML){//如果里面有内容，其实我并不需要清空它
+                                //target.innerHTML = me.__templateBlocks[i]({}); 
+                                
+                                updateBlockHtml(target, me.__templateBlocks[i]({}));
+                            }
                         }
                     });
                     
@@ -1123,11 +1164,12 @@ var runnable = function(fw){
             };
         }
         _bindingMap[widgetId].eventMap['__default_key__'] = function(){};
-    }
-    var serverController = function(id, contr_argu , constructor){
+    };
+    var serverController = function(id, clientId , constructor){
         var me = this;
         var env , session;
         env= new _Environment();
+        env.clientId = clientId;
         
         var uk = "T" + fw.utils.randomStr(10);
         
@@ -1354,11 +1396,11 @@ var runnable = function(fw){
                     
                     //hack no need 注册
                     fw.controller.__reg('_tapped_blocks', [], true);
-                    try{
+//                    try{
                     	toLoad[i].call({});
-                    }catch(e){
-                    	fw.log(e,'toLoadEror...');
-                    }
+//                    }catch(e){
+//                    	fw.log(e,'toLoadEror...');
+//                    }
                     
                     env.fireCallback();
                     
@@ -1381,15 +1423,22 @@ var runnable = function(fw){
     });
     _controller.__reg('serverController',serverController);
     
+    /*
+     uriParts contains clientId
+     * */
+    
     _controller.__reg('getServerInstance',function(identifier, uriParts,path,constructor,__onFinish){
     	
-    	var instance = new fw.controller.serverController(identifier, uriParts.contr_argu,constructor);
+    	var instance = new fw.controller.serverController(identifier, uriParts.clientId,constructor);
     	//处理session
     	// uriParts.contr_argu
     	fw.session.setResumeNew(uriParts.session,instance.__UK);
         var env = instance.getEnvironment();
     	env.__onFinish = __onFinish;
     	env.arguments = uriParts.contr_argu;//HERE, controller arguments here
+    	
+    	//有了clientId，subscribe就好办了
+    	// env.clientId = uriParts.clientId;
     	
     	instance.setPath(path);//HERE 设置path，用于判断是否重新加载load
     	
@@ -1553,7 +1602,7 @@ var runnable = function(fw){
     
    
     
-}
+};
 if(typeof module !='undefined' && module.exports){
 	module.exports = function(fw){
     	runnable(fw);

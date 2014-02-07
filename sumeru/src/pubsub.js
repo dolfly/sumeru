@@ -28,15 +28,28 @@ var runnable = function(fw,PublishContainer){
                 env = this ;//this是env
                 env.wait();//自动调用wait方法
             }
-            
-            var collection = fw.collection.create({modelName : modelName});
-            
-            //在collection上记了一下他是从哪个publish上来的
-            collection.pubName = pubName;
-            
+
             var completeCallback = arrPop.call(arguments);
             var args = arrSlice.call(arguments,1);
 
+            var collection;
+            var cache = fw.cache.getPubData(pubName,args);
+            if(cache!=null){
+                try{
+                    cache = JSON.parse(cache);
+                    collection = fw.collection.create({modelName : modelName}, cache);
+                    collection.pubName = pubName;
+                }catch(e){
+                    collection = fw.collection.create({modelName : modelName});
+                    collection.pubName = pubName;
+                }
+            }else{
+                collection = fw.collection.create({modelName : modelName});
+                collection.pubName = pubName;
+            }
+            
+            //在collection上记了一下他是从哪个publish上来的
+            
             //send the subscribe netMessage
             var version = collection.getVersion();
             var id =  this.__UK;
@@ -50,6 +63,15 @@ var runnable = function(fw,PublishContainer){
                     topPriority : false, //是否在redo subscribe时要保证先进行
                     stub    :    []
                 };
+            }
+            
+            //因为有再次订阅会两次返回，所以查看stub是否存在以后几个
+            //每次订阅都需要触发其他订阅的重新callback,如果是，这里补充env.wait
+            //否则不补充env.wait
+            for(var i=0,len = subscribeMgr[pubName].stub.length;i<len;i++){
+                if (subscribeMgr[pubName].stub[i].id === id){
+                    env && env.wait();
+                }
             }
             
             var callbackStr = Function.toString.call(completeCallback);
@@ -68,36 +90,44 @@ var runnable = function(fw,PublishContainer){
             //去重之后，包装原有callback，添加处理wait的方法
             var tmpfunc = function( ){
             	try{
-            		completeCallback(arguments[0],arguments[1]);
+            		completeCallback.apply(undefined,arguments);
                 }catch(e){
-                	console.warn("error when pubsub callback on line 84 ",e);
+                	console.warn("error when pubsub callback on line 84 \n" + e.stack || e);
                 }
                 if(env){
                     env.start();//自动调用start方法
                 }
-            }
+            };
             subscribeMgr[pubName]['stub'].push({
                 id : id,
                 sourceCustomClosure : sourceCustomClosure,
                 collection    :    collection,
                 callback      :    tmpfunc,
                 callbackStr   :    callbackStr,
+                args   : args,
                 env           :    this
             });
             
-            
-            fw.netMessage.sendMessage({
+            var sendObj = {
                 name    :    pubName,
                 //去掉第一个pubname，去掉最后一个回调函数
                 args    :    args,
                 uk:id,
                 version :    version
-            },'subscribe', function(err){
+            };
+            if (env && env.clientId){//from server controller
+                 sendObj.clientId = env.clientId;
+            }
+            fw.netMessage.sendMessage(sendObj,'subscribe', function(err){
                 sumeru.log("error : subscribe " + err);
             },function(){
                 sumeru.dev("send subscribe " + pubName, version || 'no version');
             });
-            
+            //for offline render中会执行callback，里面会用到return的 collection，所以需要延迟执行。--jin
+            if(cache!=null){
+                //collection.render();
+                setTimeout((function(c){return function(){c.render()}})(collection),2);
+            }
             return collection;
             //when data received from server, will run the onComplete
         },

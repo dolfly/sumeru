@@ -1,5 +1,6 @@
 var path = require('path');
 var fs = require('fs');
+var _debug = true;
 
 var baseDir = path.join(__dirname, '../../');
 var sumeruDir = path.join(__dirname, '/../');
@@ -14,8 +15,10 @@ require(__dirname + '/../src/log.js')(sumeru);
 /**BAE环境模拟测试用**/
 //process.BAE = 'bae';
 
+var appDir;
 if (typeof process.BAE !== 'undefined'){
     sumeru.dev('BAE MODE');
+    appDir = path.join(__dirname, '/../../app');
     
     dstDir = path.join(baseDir, '/__bae__');
     var serverDir = path.join(dstDir, '/server');
@@ -28,16 +31,23 @@ if (typeof process.BAE !== 'undefined'){
     !fs.existsSync(tmpDir) && fs.mkdirSync(tmpDir);
     !fs.existsSync(binDir) && fs.mkdirSync(binDir);
     !fs.existsSync(staticDir) && fs.mkdirSync(staticDir);
+    
+
 }else{
     sumeru.dev('NON BAE MODE');
-    dstDir = path.join(__dirname, '/../../app' + (process.argv[2] ? '/' +process.argv[2] : ''));
-}
+    appDir = path.join(__dirname, '/../../app' + (process.argv[2] ? '/' +process.argv[2] : ''));
+    dstDir = appDir;//path.join(__dirname, '/../../app' + (process.argv[2] ? '/' +process.argv[2] : ''));
     
-sumeru.dev('build from :' + baseDir);
-sumeru.dev('to :' + dstDir);
+}
+process.appDir = appDir;
 
 process.baseDir = baseDir;
 process.dstDir = dstDir;
+
+
+sumeru.dev('build from :' + baseDir);
+sumeru.dev('to :' + dstDir);
+
 
 if (baseDir.charAt(baseDir.length-1) == '/'){
     //去掉尾部的'/'
@@ -60,40 +70,51 @@ var buildAppResource = function(appDir, theBinDir){
     var buildAppContent = '';
     var buildAppCssContent = '';
 
-    function readPackage(path){
-        var url = path + '/package.js';
-        var entireContent = fs.readFileSync(url, 'utf-8');
-        var contentReg = /packages\s*\(\s*(.*)\s*\)/mg;
-        var dirnameList = [];
-        
-        //去掉换行符、换页符、回车符等
-        entireContent = entireContent.replace(/\n|\r|\t|\v|\f/g, '');
-        
-        //取出参数， 存于dirnameList
-        var result = contentReg.exec(entireContent);
-        entireContent = result[1];
-        entireContent = entireContent.replace(/'|"/mg, '');
-        dirnameList = entireContent.split(',');
-        
-        dirnameList.forEach(function(dirname){
-            dirname = dirname.trim();
-            if(!dirname)return;
-            
-            var reg = /.js$/g,
-                cssReg = /.css$/g;
-            
-            var fileUrl = path + '/' + dirname;
-            if(reg.test(dirname)){
-                buildAppContent += ';'+fs.readFileSync(fileUrl, 'utf-8');
-            }else if(cssReg.test(dirname)){
-                buildAppCssContent += fs.readFileSync(fileUrl, 'utf-8');
-            }else{
-                readPackage(fileUrl);
-            }
-        });
-    };
+    var readPackage = function(path) {
+      var url = path + '/package.js';
+      var entireContent = fs.readFileSync(url, 'utf-8');
+      var contentReg = /packages\s*\(\s*(.*)\s*\)/mg;
+      var commentReg = /\/\/.*(\n|\r)|(\/\*(.*?)\*\/)/mg;
+      var dirnameList = [];
+         
+      //去掉在package.js里的注释
+      entireContent = entireContent.replace(commentReg, '');  
+    
+      //去掉换行符、换页符、回车符等
+      entireContent = entireContent.replace(/\n|\r|\t|\v|\f/g, '');
+      //取出参数， 存于dirnameList
+      var result = contentReg.exec(entireContent);
+      if (result === null) {
+        return;
+      }
+      entireContent = result[1];
+      entireContent = entireContent.replace(/'|"/mg, '');
+      dirnameList = entireContent.split(',');
+
+      dirnameList.forEach(function(dirname) {
+        dirname = dirname.trim();
+        if (!dirname) {
+          return;
+        }
+
+        var reg = /.js$/g,
+        cssReg = /.css$/g;
+
+        var fileUrl = path + '/' + dirname;
+        if (reg.test(dirname)) {
+          buildAppContent += ';'+fs.readFileSync(fileUrl, 'utf-8');
+        } else if (cssReg.test(dirname)) {
+          buildAppCssContent += fs.readFileSync(fileUrl, 'utf-8');
+        } else {
+          readPackage(fileUrl);
+        }
+      });
+    }
 
     readPackage(appDir);
+
+
+
     
     var UglifyJS = require('uglify-js');
   
@@ -127,7 +148,8 @@ var buildAppResource = function(appDir, theBinDir){
      * */
     
     var compressor = UglifyJS.Compressor({
-        unused : false
+        unused : false,
+        warnings: false
     });
     ast.figure_out_scope();
     var compressed_ast = ast.transform(compressor);
@@ -147,8 +169,9 @@ var buildAppResource = function(appDir, theBinDir){
         buildView(appDir, binDir);
         buildManifest(appDir, path.join(dstDir, 'bin'));
     }else{
-        fs.writeFileSync(theBinDir + '/app.js', packedAppContent, 'utf-8');
-        fs.writeFileSync(theBinDir + '/app.css', packedAppCssContent, 'utf-8');
+        fs.writeFileSync(theBinDir + '/app.js', _debug?buildAppContent:packedAppContent, 'utf-8');
+        fs.writeFileSync(theBinDir + '/app.css', _debug?buildAppCssContent:packedAppCssContent, 'utf-8');
+
         buildView(appDir, theBinDir);
         buildManifest(appDir, theBinDir);
     }
@@ -182,7 +205,7 @@ var buildManifest = function(appDir, theBinDir){
             }
         }
     };
-    readAllFileInView(baseViewDir,  'view');
+    readAllFileInView(baseViewDir,  '/view');
 
     var cdir = buildConfig.cacheDirectory;
     if(cdir){
@@ -271,7 +294,7 @@ var copySumeruFile2AppBin = function(){
             buildAppResource(dir, theBinDir);
         }
     });
-}
+};
 
 copySumeruFile2AppBin();
 

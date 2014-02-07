@@ -16,7 +16,7 @@
  * }
  * 
  * default number : handleName  
- *            "0" : "onLocalMessage",         // 随便什么鬼地方去接收，但不从网络进行派发,当前由于client端存在这种使用情况.所以在此预留
+ *            "0" : "onLocalMessage",         // 随便什么地方接收，但不从网络进行派发,当前由于client端存在这种使用情况.所以在此预留
  *          "100" : "onError",                // 两侧通用为处理错误消息
  *          "200" : "onMessage",              // 两侧能用为处理数据消息
  *          "300" : "onGlobalError",          // to client only, 两端都存在，但只有client端目前存在使用场景
@@ -48,7 +48,7 @@ var runnable = function(fw){
      * 如果存在当前包空间，则直接跳出，防止重复创建对像
      */
     if(fw.netMessage){
-        fw.dev('netMessage already existed.');
+        //fw.dev('netMessage already existed.');
         return;
     }
     
@@ -68,6 +68,7 @@ var runnable = function(fw){
     var currentACL = Object.create(Default_Message_ACL);
     var receiver = null;
     var output = null;
+    var inited_OutHandle = false;
     
     var outputToServer = null;
     
@@ -86,15 +87,16 @@ var runnable = function(fw){
      * 从消息串还原为messageData并进行验证
      */
     var decodeMessage = function(msgStr){
-        // 解密并还原json对像
-        var message = sumeru.utils.parseJSON(msgStr);
+        var message =null
+            // 解密并还原json对像
+            message = fw.utils.parseJSON(msgStr);
         // 如有结构丢失，则返回false
         if(message.number === undefined || message.type === undefined || message.content === undefined){
             return false;
         }
         return message;
     };
-    
+    msgWrapper.__reg('decodeMessage',decodeMessage);
     /**
      * 创建一个消息对像
      * number 消息类型的编码
@@ -114,7 +116,7 @@ var runnable = function(fw){
         }
         return message;
     };
-    
+    msgWrapper.__reg('encodeMessage',encodeMessage);
     /**
      * 输出消息
      */
@@ -213,6 +215,7 @@ var runnable = function(fw){
             handleName = 'send' + handleName.substr(2);
             msgWrapper.__reg(handleName,createHandle(number));
         }
+        inited_OutHandle = true;
     };
     
     var shortFilter = function(a,b){
@@ -289,7 +292,14 @@ var runnable = function(fw){
      */
     // var onData = 
     msgWrapper.__reg("onData",function(msgStr,conn){
-        var message = decodeMessage(msgStr);
+        var message = null;
+        try{
+            message = decodeMessage(msgStr);
+        }catch(e){
+            // 不能解析的字符串,认为是server直接传回的非格式化内容.向外抛出;
+            throw "Server : " + msgStr;
+        }
+
         if(isServer && fw.SUMERU_APP_FW_DEBUG === false){
             try {
                 dispatch(message, conn);
@@ -355,7 +365,7 @@ var runnable = function(fw){
          * 此处只接受在于currentACL中存在的number所对应的handle,其它项，统统忽略
          */
         // merge and overwrite
-        var handleName , target , handle , receiverItem , insert;
+        var handleName , target , handle , receiverItem , insert, overwrite = false;
         for ( var number in currentACL) {
             handleName = currentACL[number];
             insert = __receiver[handleName];
@@ -369,9 +379,16 @@ var runnable = function(fw){
             }else{
                 // 如果不指定target，默认为 ''
                 target = insert.target || '';
+                
+                // FIXME !!!! 此处有小坑
+                // 如果不明确指定overwrite为true，则默认应为不覆盖之前的值，但是为了兼容之前的写法，又应当默认为true．
+                overwrite = !!insert.overwrite; //insert.overwrite === undefined ? true : !!insert.overwrite;
+                
                 if(! (handle = insert.handle) instanceof Function){
                     continue;
                 }
+                
+                handle.once = !!insert.once;
             }
 
             /*
@@ -380,13 +397,27 @@ var runnable = function(fw){
              */
             receiverItem = receiver[handleName] = receiver[handleName] || {};
             
-            // FIXME: 同handleName下相同target的handle会相互覆盖.
+            /*
+             * FIXME: 此处不处理handle重复的情况,只是按顺序推入数组
+             */
+            //debugger;
             if(Array.isArray(target)){
                 target.forEach(function(item){
-                    this[item] = handle;
+                    
+                    if(overwrite === true || !this[item]){
+                        // 指明需要复盖之前的handle时,直接替换
+                        this[item] = [handle];
+                    }else if(Array.isArray(this[item]) === true){
+                        this[item].push(handle);
+                    }
                 },receiverItem);
             }else{
-                receiverItem[target] = handle;
+                if(overwrite === true || !receiverItem[target]){
+                    // 指明需要复盖之前的handle时,直接替换
+                    receiverItem[target] = [handle];
+                }else if(Array.isArray(receiverItem[target]) === true){
+                    receiverItem[target].push(handle);
+                }
             }
         }
         
@@ -396,7 +427,11 @@ var runnable = function(fw){
             }
         },__receiver);
         
-        makeOutHandle();
+        // 只在没有handle的时候执行,如果已创建则不在创建.
+        // 这个判断不放在make out handle的时候是因为addAcl的时候要无条件执行makeOutHandle
+        if(inited_OutHandle == false){
+            makeOutHandle();
+        }
     },false);
     
     /**
@@ -406,7 +441,7 @@ var runnable = function(fw){
      */
     var dispatch = function(data,conn){
         var handleName = null , handle = null;
-        var rs = null , content = null;
+        var rs = false , content = null;
         
         if(receiver === null){
             throw 'no receiver';                                        // 当为null时，说明一次setReceiver都没有执行过，当前状态没有任何派发能力
@@ -444,7 +479,35 @@ var runnable = function(fw){
                 content = data.content;
             }
             
-            rs = handle(content,data.target,conn);     // 派发数据
+            var onceArr = [];   // 执行一次即需要被清除的
+            
+            handle.forEach(function(fun,index){
+                /*
+                 * 派发数据,
+                 * 防止一个处理错误的时候相同数据被反复派发,这里目前判断失败的方法是全部处理都反回false的情况才认为是失败.
+                 */
+                if(fun instanceof Function){
+                    rs = rs || fun(content,data.target,conn);
+                }
+                
+                if(fun.once){
+                    onceArr.push(index);
+                }
+            });
+            //debugger;
+            if(onceArr.length > 0){
+                // 如果两个长度相同,则直接清理当前的所有标签,否则需要清理数组
+                if(onceArr.length == handle.length){
+                    handle.length = 0;      // 清空数组;
+                    delete receiver[handleName][data.target || ""];
+                }else{
+                    var index = undefined;
+                    while((index = onceArr.pop()) !== undefined){
+                        handle.splice(index,1);
+                    }
+                }
+            }
+            
             
             if(rs === false && data.number == "100"){
                 data.number = "300";  
@@ -482,14 +545,13 @@ var runnable = function(fw){
 //        return rs;
     };
     
-    if(typeof module !='undefined' && module.exports){
-        module.exports = function(){
-            return msgWrapper;
-        };
-    }
+//    if(typeof module !='undefined' && module.exports){
+//        module.exports = function(){
+//        };
+//    }
     
     fw.dev("runing [NetMessage] in " + ( fw.IS_SUMERU_SERVER ? "server" : "client"));
-    
+    return msgWrapper;
 };
 
 

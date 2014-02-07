@@ -30,41 +30,34 @@ var runnable =function(fw){
     sRouter.__reg('setServerRender', function(runServer) {
     	_runServerRender = runServer;
     });
-    var routing_map = {}
+    var routing_map = {};
    
-    var check_routeing = function(path){
+    var check_routeing = function(path){//for server router using.
     	if (!_runServerRender)
     		return null;
     	if (!routing_map[path]){
     		routing_map[path] = fw.uri.getInstance(path);
+		}
+		if ( routing_map[path].controller == null){//上传文件流程
+		    return null;
+		}else{
+		    return routing_map[path];
+		}
 		
-    	}
-		return routing_map[path].controller;
-    }
-    var __routeing = function(path,dom,callback){
-        var uriParts = routing_map[path];
-        
+    };
+    var __routeing = function(path,clientId,dom,callback){
+        var uriParts = fw.uri.getInstance(path);//routing_map[path];
+        uriParts.clientId = clientId;
         //处理session change 
         isSessionChange = true;//lastSession != uriParts.session;
         lastSession = uriParts.session;
         //处理controller change 
         isControllerChange = uriParts.controller != lastController;
         lastController = uriParts.controller;
-        // debug log
-        fw.dev('isControllerChange :' + isControllerChange);
-        fw.dev('isSessionChange :' + isSessionChange);
-        fw.dev('parts of hash:' , uriParts);
-    
-        // 如果session序列化发生变化,并用不是内部拼接的(理论上此时应只有复制url产生),将变化的对像合并入session工厂.
-        // 移到 getcontrollerinstance 里面去做
-        // if(isSessionChange ){
-            // fw.session.setResume(lastSession,lastController);
-        // }
         
         return sDispatch(uriParts.controller, uriParts,path,dom,callback);
         
-    }
-    
+    };
     var findController = function(path){
         var pattern , find;
         var routeMap =fw.router.getAll();
@@ -111,16 +104,13 @@ var runnable =function(fw){
             	readyhtml = dom.replace("</body>",readydom+"</body>");
             }
             callback(readyhtml);
-        }
+        };
         fw.controller.getServerInstance(identifier, uriParts,path,constructor,__onFinish);
         
         return true;
-    }
-    var finishServerRender = function(path,dom,callback){
-        __routeing(path,dom,callback);
-    }
+    };
     
-    sRouter.__reg('finishServerRender', finishServerRender, 'private');
+    sRouter.__reg('start_routeing', __routeing, 'private');
     sRouter.__reg('check_routeing', check_routeing, 'private');
     
     sRouter.__reg('joinSessionToHash',function (serializeDat){
@@ -130,7 +120,7 @@ var runnable =function(fw){
 
     
     
-}
+};
 
 if(typeof module !='undefined' && module.exports){
     module.exports = runnable;

@@ -4,14 +4,19 @@ TIMEOUT = 10000
 MOCHA_OPTS =
 G = 
 
+JSCOVERAGE = ./node_modules/jscover/bin/jscover
 
-uname := $(shell uname)
-
-#JSCOVERAGE = ./node_modules/jscover/bin/jscover
-JSCOVERAGE = ./test/tools/jscoverage.exe
-
-ifneq (,$(findstring Linux, $(uname)))
-	JSCOVERAGE = ./jscoverage-0.5.1/jscoverage
+ifeq ($(OS),Windows_NT)
+    JSCOVERAGE = ./test/tools/jscoverage.exe
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+        JSCOVERAGE = ./jscoverage-0.5.1/jscoverage
+    endif
+    ifeq ($(UNAME_S),Darwin)
+        JSCOVERAGE = ./jscoverage-0.5.1/jscoverage
+    endif
+    JSCOVERAGE = ./jscoverage-0.5.1/jscoverage
 endif
 
 test:
